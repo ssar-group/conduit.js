@@ -1,4 +1,5 @@
-export { Execute as ExecuteNative, RPL, hasValue, getValue } from "./native";
+export { defineConduitConfig, loadConduitConfig } from "./config.js";
+export { Execute as ExecuteNative, RPL, hasValue, getValue } from "./native.js";
 
 export {
   Execute as ExecuteReact,
@@ -6,21 +7,28 @@ export {
   hasValue as hasValueReact,
   getValue as getValueReact,
   useConduit,
-} from "./react";
+} from "./react.js";
 
 const isNode =
   typeof process !== "undefined" &&
   process.versions != null &&
   process.versions.node != null;
 
+let Execute: any;
+
 if (isNode) {
-  const { Execute } = require("./native");
-  module.exports = Execute;
-  module.exports.default = Execute;
+  const nativeModule = await import("./native.js");
+  Execute = nativeModule.Execute;
 } else {
-  const { Execute } = require("./react");
-  module.exports = Execute;
-  module.exports.default = Execute;
+  const reactModule = await import("./react.js");
+  Execute = reactModule.Execute;
 }
 
-export type { Options, ExecuteResult, RPLResult, Status } from "./types";
+export default Execute;
+export type {
+  ConduitConfig,
+  Options,
+  ExecuteResult,
+  RPLResult,
+  Status,
+} from "./types.js";

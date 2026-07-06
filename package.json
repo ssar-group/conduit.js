@@ -1,92 +1,47 @@
 {
-  "name": "conduit.js",
-  "version": "1.0.0",
-  "description": "Execute and manage non-JavaScript languages (Python, Ruby, Java, C, C#) from JavaScript in Node.js, React, Next.js, Vue, Angular, and all modern frameworks.",
-  "main": "./dist/index.js",
-  "module": "./dist/index.mjs",
-  "types": "./dist/index.d.ts",
+  "name": "@ssar-group/conduit.js",
+  "version": "1.1.0",
+  "description": "Execute external scripts (Python, Ruby, Java, C, C#) from Node.js and React",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "type": "module",
   "exports": {
     ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.mjs",
-      "require": "./dist/index.js"
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
     },
     "./native": {
-      "types": "./dist/native.d.ts",
-      "import": "./dist/native.mjs",
-      "require": "./dist/native.js"
+      "import": "./dist/native.js",
+      "types": "./dist/native.d.ts"
     },
     "./react": {
-      "types": "./dist/react.d.ts",
-      "import": "./dist/react.mjs",
-      "require": "./dist/react.js"
+      "import": "./dist/react.js",
+      "types": "./dist/react.d.ts"
+    },
+    "./config": {
+      "import": "./dist/config.js",
+      "types": "./dist/config.d.ts"
     }
   },
-  "files": [
-    "dist",
-    "README.md",
-    "LICENSE"
-  ],
   "scripts": {
-    "build": "npm run build:js && npm run build:types",
-    "build:js": "esbuild src/index.ts src/native.ts src/react.ts --bundle --outdir=dist --format=esm --platform=node",
-    "build:js:cjs": "esbuild src/index.ts src/native.ts src/react.ts --bundle --outdir=dist --format=cjs --platform=node",
-    "build:types": "tsc --emitDeclarationOnly --outDir dist",
-    "dev": "esbuild src/index.ts src/native.ts src/react.ts --bundle --outdir=dist --format=esm --watch",
-    "lint": "tsc --noEmit",
-    "test": "node dist/index.js",
-    "test:native": "node dist/native.js",
-    "test:react": "node test/react.test.js",
-    "clean": "rm -rf dist",
-    "prepublishOnly": "npm run clean && npm run build"
-  },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/ssar-group/conduit.js.git"
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "test": "node --experimental-modules examples/test.js"
   },
   "keywords": [
-    "javascript",
-    "typescript",
-    "openjs",
+    "conduit",
     "python",
     "ruby",
     "java",
-    "c",
-    "csharp",
-    "execute",
-    "script",
-    "runtime",
-    "cross-language",
-    "polyglot",
-    "node",
-    "react",
-    "nextjs",
-    "vue",
-    "angular",
-    "svelte",
-    "framework-agnostic",
-    "child-process",
-    "subprocess",
-    "language-bridge",
-    "interop",
-    "ssar",
-    "development",
-    "environment"
+    "script-execution",
+    "child-process"
   ],
-  "author": "SSAR Group <contact@ssar-group.com> (https://ssar-group.com)",
-  "contributors": [
-    {
-      "name": "SSAR Group",
-      "email": "contact@ssar-group.com"
-    }
-  ],
-  "license": "ISC",
-  "bugs": {
-    "url": "https://github.com/ssar-group/conduitjs/issues"
-  },
-  "homepage": "https://github.com/ssar-group/conduit.js#readme",
-  "engines": {
-    "node": ">=14.0.0"
+  "author": "@ssar-group",
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^22.10.5",
+    "@types/react": "^19.2.7",
+    "typescript": "^5.9.3"
   },
   "peerDependencies": {
     "react": ">=16.8.0"
@@ -95,12 +50,5 @@
     "react": {
       "optional": true
     }
-  },
-  "devDependencies": {
-    "@types/node": "^22.10.5",
-    "@types/react": "^19.2.7",
-    "prettier": "^3.4.2",
-    "tsup": "^8.5.1",
-    "typescript": "^5.9.3"
   }
 }

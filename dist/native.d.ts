@@ -1,43 +1,4 @@
-type Boolstr = true | false | "true" | "false";
-type JSON = string | number | Boolstr | JSONObject | JSONArray | null;
-type Value = string | number | Boolstr;
-type Status = "success" | "error" | "unknown";
-/**
- * Configuration options.
- */
-interface Options {
-    /** Enables strict execution mode */
-    strict?: boolean;
-    /** Execution context or environment overrides */
-    context?: Record<string, unknown>;
-    /** Enables verbose logging */
-    debug?: boolean;
-    pythonPath?: string;
-    args?: string[];
-    timeoutMs?: number;
-    javaPath?: string;
-    rubyPath?: string;
-    CPath?: string;
-    CS?: string;
-    cwd?: string;
-}
-interface JSONObject {
-    [key: string]: JSON;
-}
-interface JSONArray extends Array<JSON> {
-}
-interface ExecuteResult {
-    status: Status;
-    stdout: string;
-    stderr: string;
-    value?: any;
-    exitCode: number;
-}
-interface RPLResult {
-    type: "null" | "string" | "boolean" | "number" | "object" | "array" | "unknown";
-    raw: unknown;
-    value?: Value | JSONObject | JSONArray;
-}
+import type { ExecuteResult, Options, RPLResult } from "./types.js";
 /**
  * Executes an external script (Python, Ruby, Java, C#, C) in a separate process
  * and captures its execution result.
@@ -105,4 +66,3 @@ export declare function getValue<T = any>(result: ExecuteResult, path: string, d
  * Main export as default for easier imports
  */
 export default Execute;
-//# sourceMappingURL=native.d.ts.map

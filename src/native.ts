@@ -4,91 +4,24 @@
 // | |    / _ \| '_ \ / _` | | | | | __| _   | |\___ \
 // | |___| (_) | | | | (_| | |_| | | |_ | |__| |____) |
 //  \_____\___/|_| |_|\__,_|\__,_|_|\__(_)____/|_____/
-// --------(native)
+// --------(native JavaScript)
 
 import { spawn } from "child_process";
 import path from "path";
 import fs from "fs/promises";
-
-type Boolstr = true | false | "true" | "false";
-type JSON = string | number | Boolstr | JSONObject | JSONArray | null;
-type Value = string | number | Boolstr;
-type Status = "success" | "error" | "unknown";
-
-/**
- * Configuration options.
- */
-interface Options {
-  /** Enables strict execution mode */
-  strict?: boolean;
-
-  /** Execution context or environment overrides */
-  context?: Record<string, unknown>;
-
-  /** Enables verbose logging */
-  debug?: boolean;
-
-  pythonPath?: string;
-  args?: string[];
-  timeoutMs?: number;
-  javaPath?: string;
-  rubyPath?: string;
-  CPath?: string;
-  CS?: string;
-  cwd?: string;
-}
-
-interface JSONObject {
-  [key: string]: JSON;
-}
-
-interface JSONArray extends Array<JSON> {}
-
-interface ExecuteResult {
-  status: Status;
-  stdout: string;
-  stderr: string;
-  value?: any;
-  exitCode: number;
-}
-
-interface RPLResult {
-  type:
-    | "null"
-    | "string"
-    | "boolean"
-    | "number"
-    | "object"
-    | "array"
-    | "unknown";
-  raw: unknown;
-  value?: Value | JSONObject | JSONArray;
-}
+import { loadConduitConfig, mergeConduitConfig } from "./config.js";
+import type { ExecuteResult, Options, RPLResult } from "./types.js";
+import {
+  extractJsonValue,
+  formatError,
+  getValue as readValue,
+  hasValue as compareValue,
+  logDebug,
+  logWarn,
+  normalizeResultValue,
+} from "./utils.js";
 
 const getScriptRoot = () => process.cwd();
-
-/**
- * Extracts the last valid JSON value from stdout
- * Useful when scripts print multiple lines and the last one is the result
- */
-function extractJsonValue(stdout: string): unknown {
-  const lines = stdout.trim().split("\n").reverse();
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (!trimmed) continue;
-
-    try {
-      return JSON.parse(trimmed);
-    } catch {
-      continue;
-    }
-  }
-  return null;
-}
-
-function logDebug(enabled: boolean | undefined, ...args: unknown[]) {
-  if (enabled) console.debug("[Conduit]", ...args);
-}
 
 interface LangConfig {
   cmd: string;
@@ -118,15 +51,35 @@ interface LangConfig {
  */
 export async function Execute(
   i: string,
-  options: Options = {}
+  options: Options = {},
 ): Promise<ExecuteResult> {
-  const root = options.cwd ?? getScriptRoot();
+  if (!i || typeof i !== "string") {
+    throw new Error(formatError("Script path is required"));
+  }
+
+  if (options.args && !Array.isArray(options.args)) {
+    throw new Error(formatError("Options args must be an array of strings"));
+  }
+
+  if (options.timeoutMs !== undefined && options.timeoutMs <= 0) {
+    throw new Error(formatError("timeoutMs must be greater than 0"));
+  }
+
+  const configRoot = options.cwd ?? getScriptRoot();
+  const config = await loadConduitConfig(configRoot, options);
+  const resolvedOptions = mergeConduitConfig(config, options);
+  const root = resolvedOptions.cwd ?? configRoot;
   const absolutePath = path.resolve(root, i);
 
   try {
     await fs.access(absolutePath);
   } catch {
-    throw new Error(`File not found or not accessible: ${absolutePath}`);
+    throw new Error(
+      formatError("Script file was not found or is not readable", {
+        script: i,
+        resolved: absolutePath,
+      }),
+    );
   }
 
   const ext = path.extname(absolutePath).toLowerCase();
@@ -156,27 +109,41 @@ export async function Execute(
 
   const langConfig = languageMap[ext];
   if (!langConfig) {
-    throw new Error(`Unsupported file extension: ${ext}`);
+    throw new Error(
+      formatError("Unsupported file extension", {
+        extension: ext || "(none)",
+        supported: Object.keys(languageMap).join(", "),
+      }),
+    );
   }
 
-  logDebug(options.debug, "Executing", langConfig.cmd, absolutePath);
+  logDebug(resolvedOptions.debug, "Executing", langConfig.cmd, absolutePath);
 
   return new Promise((resolve, reject) => {
-    const args = langConfig.getArgs(absolutePath, options.args ?? []);
+    const args = langConfig.getArgs(absolutePath, resolvedOptions.args ?? []);
+    const env = {
+      ...process.env,
+      ...resolvedOptions.env,
+      ...(resolvedOptions.context
+        ? { CONDUIT_CONTEXT: JSON.stringify(resolvedOptions.context) }
+        : {}),
+    };
     const child = spawn(langConfig.cmd, args, {
       cwd: root,
-      env: process.env,
+      env,
     });
 
     let stdout = "";
     let stderr = "";
     let timeout: NodeJS.Timeout | undefined;
+    let timedOut = false;
 
-    if (options.timeoutMs) {
+    if (resolvedOptions.timeoutMs) {
       timeout = setTimeout(() => {
-        stderr += "\nProcess killed (timeout)";
+        timedOut = true;
+        stderr += `\nProcess killed after ${resolvedOptions.timeoutMs}ms timeout`;
         child.kill("SIGKILL");
-      }, options.timeoutMs);
+      }, resolvedOptions.timeoutMs);
     }
 
     child.stdout.on("data", (d) => (stdout += d.toString()));
@@ -184,7 +151,14 @@ export async function Execute(
 
     child.on("error", (err) => {
       if (timeout) clearTimeout(timeout);
-      reject(new Error(`Execution failed: ${err.message}`));
+      reject(
+        new Error(
+          formatError("Execution failed before the script started", {
+            command: langConfig.cmd,
+            reason: err.message,
+          }),
+        ),
+      );
     });
 
     child.on("close", (code) => {
@@ -193,15 +167,19 @@ export async function Execute(
       const value = extractJsonValue(stdout);
 
       if (code !== 0) {
-        logDebug(options.debug, "Execution error", stderr);
+        logDebug(resolvedOptions.debug, "Execution error", stderr.trim());
         resolve({
           status: "error",
           stdout: stdout.trim(),
-          stderr: stderr.trim() || `Exited with code ${code}`,
+          stderr: stderr.trim() || `Process exited with code ${code}`,
           value,
-          exitCode: code ?? -1,
+          exitCode: timedOut ? -1 : code ?? -1,
         });
         return;
+      }
+
+      if (stderr.trim()) {
+        logWarn(resolvedOptions, `Script wrote to stderr: ${stderr.trim()}`);
       }
 
       resolve({
@@ -233,30 +211,11 @@ export async function Execute(
  * ```
  */
 export function RPL(input: unknown): RPLResult {
-  if (input === null || input === undefined) {
-    return { type: "null", raw: input };
+  const normalized = normalizeResultValue(input);
+  if (normalized.type === "unknown") {
+    logWarn({}, `Unknown RPL data type: ${typeof input}`);
   }
-
-  switch (typeof input) {
-    case "string":
-      return { type: "string", raw: input, value: input };
-
-    case "boolean":
-      return { type: "boolean", raw: input, value: input };
-
-    case "number":
-      return { type: "number", raw: input, value: input };
-
-    case "object":
-      if (Array.isArray(input)) {
-        return { type: "array", raw: input, value: input as JSONArray };
-      }
-      return { type: "object", raw: input, value: input as JSONObject };
-
-    default:
-      console.warn("[Conduit] Unknown RPL data type:", typeof input);
-      return { type: "unknown", raw: input };
-  }
+  return normalized;
 }
 
 /**
@@ -272,7 +231,7 @@ export function RPL(input: unknown): RPLResult {
  * ```
  */
 export function hasValue(result: ExecuteResult, expected: unknown): boolean {
-  return result.value === expected;
+  return compareValue(result, expected);
 }
 
 /**
@@ -287,23 +246,9 @@ export function hasValue(result: ExecuteResult, expected: unknown): boolean {
 export function getValue<T = any>(
   result: ExecuteResult,
   path: string,
-  defaultValue?: T
+  defaultValue?: T,
 ): T | undefined {
-  if (!result.value || typeof result.value !== "object") {
-    return defaultValue;
-  }
-
-  const keys = path.split(".");
-  let current: any = result.value;
-
-  for (const key of keys) {
-    if (current === null || current === undefined) {
-      return defaultValue;
-    }
-    current = current[key];
-  }
-
-  return current ?? defaultValue;
+  return readValue(result, path, defaultValue);
 }
 
 /**

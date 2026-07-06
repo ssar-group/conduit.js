@@ -6,6 +6,7 @@ export interface Options {
     strict?: boolean;
     context?: Record<string, unknown>;
     debug?: boolean;
+    warnings?: boolean;
     pythonPath?: string;
     args?: string[];
     timeoutMs?: number;
@@ -14,6 +15,7 @@ export interface Options {
     CPath?: string;
     CS?: string;
     cwd?: string;
+    env?: Record<string, string | undefined>;
     apiEndpoint?: string;
     headers?: Record<string, string>;
     signal?: AbortSignal;
@@ -35,4 +37,4 @@ export interface RPLResult {
     raw: unknown;
     value?: Value | JSONObject | JSONArray;
 }
-//# sourceMappingURL=types.d.ts.map
+export type ConduitConfig = Omit<Options, "signal">;

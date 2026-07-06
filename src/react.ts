@@ -7,89 +7,16 @@
 // --------(react)
 
 import { useState, useCallback } from "react";
-
-type Boolstr = true | false | "true" | "false";
-type JSON = string | number | Boolstr | JSONObject | JSONArray | null;
-type Value = string | number | Boolstr;
-type Status = "success" | "error" | "unknown";
-
-/**
- * Configuration options for browser execution.
- */
-interface Options {
-  /** Enables strict execution mode */
-  strict?: boolean;
-
-  /** Execution context or environment overrides */
-  context?: Record<string, unknown>;
-
-  /** Enables verbose logging */
-  debug?: boolean;
-
-  /** API endpoint URL for script execution */
-  apiEndpoint?: string;
-
-  /** Additional headers for API requests */
-  headers?: Record<string, string>;
-
-  /** Request timeout in milliseconds */
-  timeoutMs?: number;
-
-  /** Arguments to pass to the script */
-  args?: string[];
-
-  /** Abort signal for cancellation */
-  signal?: AbortSignal;
-}
-
-interface JSONObject {
-  [key: string]: JSON;
-}
-
-interface JSONArray extends Array<JSON> {}
-
-interface ExecuteResult {
-  status: Status;
-  stdout: string;
-  stderr: string;
-  value?: any;
-  exitCode: number;
-}
-
-interface RPLResult {
-  type:
-    | "null"
-    | "string"
-    | "boolean"
-    | "number"
-    | "object"
-    | "array"
-    | "unknown";
-  raw: unknown;
-  value?: Value | JSONObject | JSONArray;
-}
-
-/**
- * Extracts the last valid JSON value from stdout
- */
-function extractJsonValue(stdout: string): unknown {
-  const lines = stdout.trim().split("\n").reverse();
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (!trimmed) continue;
-
-    try {
-      return JSON.parse(trimmed);
-    } catch {
-      continue;
-    }
-  }
-  return null;
-}
-
-function logDebug(enabled: boolean | undefined, ...args: unknown[]) {
-  if (enabled) console.debug("[Conduit]", ...args);
-}
+import type { ExecuteResult, Options, RPLResult, Status } from "./types.js";
+import {
+  extractJsonValue,
+  formatError,
+  getValue as readValue,
+  hasValue as compareValue,
+  logDebug,
+  logWarn,
+  normalizeResultValue,
+} from "./utils.js";
 
 /**
  * Executes a script via API endpoint (for browser/React environments).
@@ -126,13 +53,33 @@ export async function Execute(
 ): Promise<ExecuteResult> {
   const apiEndpoint = options.apiEndpoint || "/api/conduit/execute";
 
+  if (!scriptPath || typeof scriptPath !== "string") {
+    return {
+      status: "error",
+      stdout: "",
+      stderr: formatError("Script path is required"),
+      exitCode: -1,
+    };
+  }
+
+  if (options.timeoutMs !== undefined && options.timeoutMs <= 0) {
+    return {
+      status: "error",
+      stdout: "",
+      stderr: formatError("timeoutMs must be greater than 0"),
+      exitCode: -1,
+    };
+  }
+
   logDebug(options.debug, "Executing", scriptPath, "via", apiEndpoint);
+
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
 
   try {
     const controller = new AbortController();
-    const timeoutId = options.timeoutMs
+    timeoutId = options.timeoutMs
       ? setTimeout(() => controller.abort(), options.timeoutMs)
-      : null;
+      : undefined;
 
     const signal = options.signal || controller.signal;
 
@@ -156,7 +103,13 @@ export async function Execute(
 
     if (!response.ok) {
       const errorText = await response.text();
-      throw new Error(`API request failed: ${response.status} - ${errorText}`);
+      throw new Error(
+        formatError("API request failed", {
+          status: response.status,
+          statusText: response.statusText,
+          body: errorText.slice(0, 500),
+        }),
+      );
     }
 
     const data = await response.json();
@@ -167,20 +120,30 @@ export async function Execute(
         ? data.value
         : extractJsonValue(data.stdout || "");
 
-    return {
+    const result = {
       status: data.status || "success",
       stdout: data.stdout || "",
       stderr: data.stderr || "",
       value,
       exitCode: data.exitCode ?? 0,
     };
+
+    if (result.status === "success" && result.stderr) {
+      logWarn(options, `API returned stderr: ${result.stderr}`);
+    }
+
+    return result;
   } catch (error: any) {
+    if (timeoutId) clearTimeout(timeoutId);
+
     if (error.name === "AbortError") {
       logDebug(options.debug, "Request aborted");
       return {
         status: "error",
         stdout: "",
-        stderr: "Request aborted (timeout or cancelled)",
+        stderr: options.timeoutMs
+          ? `Request aborted after ${options.timeoutMs}ms timeout`
+          : "Request aborted",
         exitCode: -1,
       };
     }
@@ -213,30 +176,11 @@ export async function Execute(
  * ```
  */
 export function RPL(input: unknown): RPLResult {
-  if (input === null || input === undefined) {
-    return { type: "null", raw: input };
+  const normalized = normalizeResultValue(input);
+  if (normalized.type === "unknown") {
+    logWarn({}, `Unknown RPL data type: ${typeof input}`);
   }
-
-  switch (typeof input) {
-    case "string":
-      return { type: "string", raw: input, value: input };
-
-    case "boolean":
-      return { type: "boolean", raw: input, value: input };
-
-    case "number":
-      return { type: "number", raw: input, value: input };
-
-    case "object":
-      if (Array.isArray(input)) {
-        return { type: "array", raw: input, value: input as JSONArray };
-      }
-      return { type: "object", raw: input, value: input as JSONObject };
-
-    default:
-      console.warn("[Conduit] Unknown RPL data type:", typeof input);
-      return { type: "unknown", raw: input };
-  }
+  return normalized;
 }
 
 /**
@@ -251,7 +195,7 @@ export function RPL(input: unknown): RPLResult {
  * ```
  */
 export function hasValue(result: ExecuteResult, expected: unknown): boolean {
-  return result.value === expected;
+  return compareValue(result, expected);
 }
 
 /**
@@ -268,21 +212,7 @@ export function getValue<T = any>(
   path: string,
   defaultValue?: T
 ): T | undefined {
-  if (!result.value || typeof result.value !== "object") {
-    return defaultValue;
-  }
-
-  const keys = path.split(".");
-  let current: any = result.value;
-
-  for (const key of keys) {
-    if (current === null || current === undefined) {
-      return defaultValue;
-    }
-    current = current[key];
-  }
-
-  return current ?? defaultValue;
+  return readValue(result, path, defaultValue);
 }
 
 /**

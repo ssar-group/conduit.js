@@ -1,6 +1,6 @@
 # Conduit.JS - Multi-Language Execution Interface
 
-![](https://img.shields.io/badge/Version%201.0.0-000000?style=flat-square&logo=github)
+![](https://img.shields.io/badge/Version%201.1.0-000000?style=flat-square&logo=github)
 ![](<https://img.shields.io/badge/JavaScript%20(Build%20TS)-000000?style=flat-square&logo=javascript&logoColor=white>)
 
 ## Overview
@@ -19,22 +19,68 @@ Choose the command corresponding to your preferred package manager:
 
 ```Bash
 # Using npm
-npm install conduit.js
+npm install @ssar-group/conduit.js
 
 # Using pnpm
-pnpm add conduit.js
+pnpm add @ssar-group/conduit.js
 
 # Using yarn
-yarn add conduit.js
+yarn add @ssar-group/conduit.js
 ```
 
 ### SSAR Ecosystem Installation
 
-For projects managed within the SSAR environment, use the [DevKit CLI](sgrp://dvkit/open-cli-manager):
+For projects managed within the SSAR environment, use the [DevKit CLI (using opm)](https://github.com/ssar-group/opm):
 
 ```Bash
-dvkit i conduit.js -pos wks
+opm devkit
+> conduit.js
 ```
+
+## Quick Usage
+
+```ts
+import Execute, { getValue } from "@ssar-group/conduit.js";
+
+const result = await Execute("scripts/hello.py", {
+  args: ["World"],
+  timeoutMs: 5000,
+});
+
+if (result.status === "error") {
+  console.error(result.stderr);
+}
+
+console.log(getValue(result, "greeting"));
+```
+
+## Configuration
+
+Conduit.js looks for a config file in your project root before each run. Per-call options still win over config values.
+
+Supported files:
+
+- `conduit.config.json`
+- `conduit.config.js`
+- `conduit.config.mjs`
+
+```js
+// conduit.config.mjs
+import { defineConduitConfig } from "@ssar-group/conduit.js/config";
+
+export default defineConduitConfig({
+  pythonPath: "python3",
+  rubyPath: "ruby",
+  timeoutMs: 5000,
+  debug: false,
+  warnings: true,
+  env: {
+    NODE_ENV: "development",
+  },
+});
+```
+
+The package also includes `conduit-config.d.ts` for typing config values when you want editor support.
 
 ## Contributing
 

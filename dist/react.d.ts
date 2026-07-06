@@ -1,45 +1,4 @@
-type Boolstr = true | false | "true" | "false";
-type JSON = string | number | Boolstr | JSONObject | JSONArray | null;
-type Value = string | number | Boolstr;
-type Status = "success" | "error" | "unknown";
-/**
- * Configuration options for browser execution.
- */
-interface Options {
-    /** Enables strict execution mode */
-    strict?: boolean;
-    /** Execution context or environment overrides */
-    context?: Record<string, unknown>;
-    /** Enables verbose logging */
-    debug?: boolean;
-    /** API endpoint URL for script execution */
-    apiEndpoint?: string;
-    /** Additional headers for API requests */
-    headers?: Record<string, string>;
-    /** Request timeout in milliseconds */
-    timeoutMs?: number;
-    /** Arguments to pass to the script */
-    args?: string[];
-    /** Abort signal for cancellation */
-    signal?: AbortSignal;
-}
-interface JSONObject {
-    [key: string]: JSON;
-}
-interface JSONArray extends Array<JSON> {
-}
-interface ExecuteResult {
-    status: Status;
-    stdout: string;
-    stderr: string;
-    value?: any;
-    exitCode: number;
-}
-interface RPLResult {
-    type: "null" | "string" | "boolean" | "number" | "object" | "array" | "unknown";
-    raw: unknown;
-    value?: Value | JSONObject | JSONArray;
-}
+import type { ExecuteResult, Options, RPLResult, Status } from "./types.js";
 /**
  * Executes a script via API endpoint (for browser/React environments).
  *
@@ -134,11 +93,15 @@ export declare function getValue<T = any>(result: ExecuteResult, path: string, d
  * ```
  */
 export declare function useConduit(): {
-    execute: any;
-    loading: any;
-    error: any;
-    result: any;
-    reset: any;
+    execute: (scriptPath: string, options?: Options) => Promise<ExecuteResult | {
+        status: Status;
+        stdout: string;
+        stderr: any;
+        exitCode: number;
+    }>;
+    loading: boolean;
+    error: string;
+    result: ExecuteResult;
+    reset: () => void;
 };
 export default Execute;
-//# sourceMappingURL=react.d.ts.map
