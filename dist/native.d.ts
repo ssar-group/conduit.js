@@ -61,8 +61,9 @@ export declare function hasValue(result: ExecuteResult, expected: unknown): bool
  * const name = getValue(result, "user.name", "Unknown");
  * ```
  */
-export declare function getValue<T = any>(result: ExecuteResult, path: string, defaultValue?: T): T | undefined;
+export declare function getValue<T = unknown>(result: ExecuteResult, path: string, defaultValue?: T): T | undefined;
 /**
  * Main export as default for easier imports
  */
 export default Execute;
+//# sourceMappingURL=native.d.ts.map

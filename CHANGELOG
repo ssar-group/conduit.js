@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.0.0]
+
+- Added native `AbortSignal` support.
+- Added `maxStdoutBytes` and `maxStderrBytes` output limits.
+- Added strict mode behavior for missing JSON output and stderr.
+- Fixed config-defined runner paths being ignored by native execution.
+- Tightened TypeScript settings and public result typing.
+- Added automated tests for native execution behavior.
+- Limited npm package contents with a package `files` whitelist.
+- Reworked README usage, options, config, and development docs.
+
 ## [1.1.0]
 
 - Improved project structure

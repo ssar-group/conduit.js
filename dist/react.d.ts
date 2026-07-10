@@ -1,4 +1,4 @@
-import type { ExecuteResult, Options, RPLResult, Status } from "./types.js";
+import type { ExecuteResult, Options, RPLResult } from "./types.js";
 /**
  * Executes a script via API endpoint (for browser/React environments).
  *
@@ -68,7 +68,7 @@ export declare function hasValue(result: ExecuteResult, expected: unknown): bool
  * const userName = getValue(result, "user.name", "Unknown");
  * ```
  */
-export declare function getValue<T = any>(result: ExecuteResult, path: string, defaultValue?: T): T | undefined;
+export declare function getValue<T = unknown>(result: ExecuteResult, path: string, defaultValue?: T): T | undefined;
 /**
  * React Hook for executing scripts with loading/error states
  *
@@ -93,15 +93,11 @@ export declare function getValue<T = any>(result: ExecuteResult, path: string, d
  * ```
  */
 export declare function useConduit(): {
-    execute: (scriptPath: string, options?: Options) => Promise<ExecuteResult | {
-        status: Status;
-        stdout: string;
-        stderr: any;
-        exitCode: number;
-    }>;
+    execute: (scriptPath: string, options?: Options) => Promise<ExecuteResult>;
     loading: boolean;
-    error: string;
-    result: ExecuteResult;
+    error: string | null;
+    result: ExecuteResult | null;
     reset: () => void;
 };
 export default Execute;
+//# sourceMappingURL=react.d.ts.map

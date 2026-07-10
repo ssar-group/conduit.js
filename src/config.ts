@@ -2,7 +2,7 @@ import fs from "fs/promises";
 import path from "path";
 import { pathToFileURL } from "url";
 
-import type { ConduitConfig } from "./types.js";
+import type { ConduitConfig, Options } from "./types.js";
 import { formatError, isPlainObject, logDebug, logWarn } from "./utils.js";
 
 const configNames = [
@@ -91,8 +91,8 @@ async function readJsConfig(filePath: string): Promise<unknown> {
 
 export function mergeConduitConfig(
   config: ConduitConfig,
-  options: ConduitConfig,
-): ConduitConfig {
+  options: Options,
+): Options {
   const merged = {
     ...config,
     ...options,

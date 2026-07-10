@@ -19,6 +19,8 @@ export interface Options {
     apiEndpoint?: string;
     headers?: Record<string, string>;
     signal?: AbortSignal;
+    maxStdoutBytes?: number;
+    maxStderrBytes?: number;
 }
 export interface JSONObject {
     [key: string]: JSON;
@@ -29,7 +31,7 @@ export interface ExecuteResult {
     status: Status;
     stdout: string;
     stderr: string;
-    value?: any;
+    value?: unknown;
     exitCode: number;
 }
 export interface RPLResult {
@@ -38,3 +40,4 @@ export interface RPLResult {
     value?: Value | JSONObject | JSONArray;
 }
 export type ConduitConfig = Omit<Options, "signal">;
+//# sourceMappingURL=types.d.ts.map

@@ -8,6 +8,11 @@ import type {
 
 const prefix = "[Conduit]";
 
+export interface ExtractedJsonValue {
+  found: boolean;
+  value: unknown;
+}
+
 export function logDebug(enabled: boolean | undefined, ...args: unknown[]) {
   if (enabled) console.debug(prefix, ...args);
 }
@@ -39,7 +44,7 @@ export function isPlainObject(input: unknown): input is Record<string, unknown> 
   );
 }
 
-export function extractJsonValue(stdout: string): unknown {
+export function findJsonValue(stdout: string): ExtractedJsonValue {
   const lines = stdout.trim().split(/\r?\n/);
 
   for (let index = lines.length - 1; index >= 0; index -= 1) {
@@ -47,13 +52,23 @@ export function extractJsonValue(stdout: string): unknown {
     if (!line) continue;
 
     try {
-      return JSON.parse(line);
+      return {
+        found: true,
+        value: JSON.parse(line) as unknown,
+      };
     } catch {
       continue;
     }
   }
 
-  return null;
+  return {
+    found: false,
+    value: null,
+  };
+}
+
+export function extractJsonValue(stdout: string): unknown {
+  return findJsonValue(stdout).value;
 }
 
 export function normalizeResultValue(input: unknown): RPLResult {

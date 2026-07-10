@@ -13,6 +13,7 @@ import { loadConduitConfig, mergeConduitConfig } from "./config.js";
 import type { ExecuteResult, Options, RPLResult } from "./types.js";
 import {
   extractJsonValue,
+  findJsonValue,
   formatError,
   getValue as readValue,
   hasValue as compareValue,
@@ -26,6 +27,74 @@ const getScriptRoot = () => process.cwd();
 interface LangConfig {
   cmd: string;
   getArgs: (filePath: string, extraArgs: string[]) => string[];
+}
+
+interface CapturedOutput {
+  text: string;
+  bytes: number;
+  exceeded: boolean;
+}
+
+type OutputStreamName = "stdout" | "stderr";
+
+function validatePositiveNumber(name: string, value: number | undefined): void {
+  if (value !== undefined && (!Number.isFinite(value) || value <= 0)) {
+    throw new Error(formatError(`${name} must be greater than 0`));
+  }
+}
+
+function validatePositiveInteger(name: string, value: number | undefined): void {
+  if (value !== undefined && (!Number.isSafeInteger(value) || value <= 0)) {
+    throw new Error(formatError(`${name} must be a positive integer`));
+  }
+}
+
+function appendOutput(
+  output: CapturedOutput,
+  chunk: Buffer,
+  maxBytes: number | undefined,
+): CapturedOutput {
+  const text = chunk.toString();
+
+  if (maxBytes === undefined) {
+    return {
+      text: output.text + text,
+      bytes: output.bytes + Buffer.byteLength(text),
+      exceeded: output.exceeded,
+    };
+  }
+
+  const remaining = maxBytes - output.bytes;
+
+  if (remaining <= 0) {
+    return {
+      ...output,
+      exceeded: true,
+    };
+  }
+
+  const bytes = Buffer.from(text);
+
+  if (bytes.byteLength <= remaining) {
+    return {
+      text: output.text + text,
+      bytes: output.bytes + bytes.byteLength,
+      exceeded: output.exceeded,
+    };
+  }
+
+  const trimmed = bytes.subarray(0, remaining).toString("utf8").replace(/\uFFFD$/, "");
+
+  return {
+    text: output.text + trimmed,
+    bytes: maxBytes,
+    exceeded: true,
+  };
+}
+
+function joinDiagnostics(stderr: string, diagnostics: string[]): string {
+  const parts = [stderr.trim(), ...diagnostics].filter(Boolean);
+  return parts.join("\n");
 }
 
 /**
@@ -57,19 +126,28 @@ export async function Execute(
     throw new Error(formatError("Script path is required"));
   }
 
-  if (options.args && !Array.isArray(options.args)) {
+  if (options.args && (!Array.isArray(options.args) || options.args.some((arg) => typeof arg !== "string"))) {
     throw new Error(formatError("Options args must be an array of strings"));
   }
 
-  if (options.timeoutMs !== undefined && options.timeoutMs <= 0) {
-    throw new Error(formatError("timeoutMs must be greater than 0"));
-  }
+  validatePositiveNumber("timeoutMs", options.timeoutMs);
+  validatePositiveInteger("maxStdoutBytes", options.maxStdoutBytes);
+  validatePositiveInteger("maxStderrBytes", options.maxStderrBytes);
 
   const configRoot = options.cwd ?? getScriptRoot();
   const config = await loadConduitConfig(configRoot, options);
   const resolvedOptions = mergeConduitConfig(config, options);
   const root = resolvedOptions.cwd ?? configRoot;
   const absolutePath = path.resolve(root, i);
+
+  if (resolvedOptions.signal?.aborted) {
+    return {
+      status: "error",
+      stdout: "",
+      stderr: "Execution aborted before the script started",
+      exitCode: -1,
+    };
+  }
 
   try {
     await fs.access(absolutePath);
@@ -86,23 +164,23 @@ export async function Execute(
 
   const languageMap: Record<string, LangConfig> = {
     ".py": {
-      cmd: options.pythonPath ?? "python3",
+      cmd: resolvedOptions.pythonPath ?? "python3",
       getArgs: (p, a) => [p, ...a],
     },
     ".rb": {
-      cmd: options.rubyPath ?? "ruby",
+      cmd: resolvedOptions.rubyPath ?? "ruby",
       getArgs: (p, a) => [p, ...a],
     },
     ".java": {
-      cmd: options.javaPath ?? "java",
+      cmd: resolvedOptions.javaPath ?? "java",
       getArgs: (p, a) => [p, ...a],
     },
     ".cs": {
-      cmd: options.CS ?? "dotnet",
+      cmd: resolvedOptions.CS ?? "dotnet",
       getArgs: (p, a) => ["script", p, "--", ...a],
     },
     ".c": {
-      cmd: options.CPath ?? "tcc",
+      cmd: resolvedOptions.CPath ?? "tcc",
       getArgs: (p, a) => ["-run", p, ...a],
     },
   };
@@ -133,24 +211,68 @@ export async function Execute(
       env,
     });
 
-    let stdout = "";
-    let stderr = "";
+    let stdout: CapturedOutput = { text: "", bytes: 0, exceeded: false };
+    let stderr: CapturedOutput = { text: "", bytes: 0, exceeded: false };
     let timeout: NodeJS.Timeout | undefined;
+    let abortKillTimeout: NodeJS.Timeout | undefined;
     let timedOut = false;
+    let aborted = false;
+    let limitExceeded: OutputStreamName | undefined;
+
+    const cleanup = () => {
+      if (timeout) clearTimeout(timeout);
+      if (abortKillTimeout) clearTimeout(abortKillTimeout);
+      resolvedOptions.signal?.removeEventListener("abort", abortHandler);
+    };
+
+    const killProcess = (signal: NodeJS.Signals) => {
+      if (!child.killed) {
+        child.kill(signal);
+      }
+    };
+
+    const stopForOutputLimit = (stream: OutputStreamName) => {
+      if (limitExceeded) return;
+
+      limitExceeded = stream;
+      killProcess("SIGKILL");
+    };
+
+    const abortHandler = () => {
+      if (aborted) return;
+
+      aborted = true;
+      killProcess("SIGTERM");
+      abortKillTimeout = setTimeout(() => {
+        killProcess("SIGKILL");
+      }, 1000);
+    };
 
     if (resolvedOptions.timeoutMs) {
       timeout = setTimeout(() => {
         timedOut = true;
-        stderr += `\nProcess killed after ${resolvedOptions.timeoutMs}ms timeout`;
-        child.kill("SIGKILL");
+        killProcess("SIGKILL");
       }, resolvedOptions.timeoutMs);
     }
 
-    child.stdout.on("data", (d) => (stdout += d.toString()));
-    child.stderr.on("data", (d) => (stderr += d.toString()));
+    resolvedOptions.signal?.addEventListener("abort", abortHandler, { once: true });
+
+    child.stdout.on("data", (data: Buffer) => {
+      stdout = appendOutput(stdout, data, resolvedOptions.maxStdoutBytes);
+      if (stdout.exceeded) {
+        stopForOutputLimit("stdout");
+      }
+    });
+
+    child.stderr.on("data", (data: Buffer) => {
+      stderr = appendOutput(stderr, data, resolvedOptions.maxStderrBytes);
+      if (stderr.exceeded) {
+        stopForOutputLimit("stderr");
+      }
+    });
 
     child.on("error", (err) => {
-      if (timeout) clearTimeout(timeout);
+      cleanup();
       reject(
         new Error(
           formatError("Execution failed before the script started", {
@@ -162,30 +284,75 @@ export async function Execute(
     });
 
     child.on("close", (code) => {
-      if (timeout) clearTimeout(timeout);
+      cleanup();
 
-      const value = extractJsonValue(stdout);
+      const stdoutText = stdout.text.trim();
+      const stderrText = stderr.text.trim();
+      const parsed = findJsonValue(stdoutText);
+      const diagnostics: string[] = [];
 
-      if (code !== 0) {
-        logDebug(resolvedOptions.debug, "Execution error", stderr.trim());
+      if (timedOut) {
+        diagnostics.push(`Process killed after ${resolvedOptions.timeoutMs}ms timeout`);
+      }
+
+      if (aborted) {
+        diagnostics.push("Execution aborted");
+      }
+
+      if (limitExceeded) {
+        const optionName = limitExceeded === "stdout" ? "maxStdoutBytes" : "maxStderrBytes";
+        const limit = limitExceeded === "stdout"
+          ? resolvedOptions.maxStdoutBytes
+          : resolvedOptions.maxStderrBytes;
+
+        diagnostics.push(`${limitExceeded} exceeded ${optionName} limit of ${limit} bytes`);
+      }
+
+      const stderrWithDiagnostics = joinDiagnostics(stderrText, diagnostics);
+      const value = parsed.value;
+
+      if (code !== 0 || timedOut || aborted || limitExceeded) {
+        logDebug(resolvedOptions.debug, "Execution error", stderrWithDiagnostics);
         resolve({
           status: "error",
-          stdout: stdout.trim(),
-          stderr: stderr.trim() || `Process exited with code ${code}`,
+          stdout: stdoutText,
+          stderr: stderrWithDiagnostics || `Process exited with code ${code}`,
           value,
-          exitCode: timedOut ? -1 : code ?? -1,
+          exitCode: timedOut || aborted || limitExceeded ? -1 : code ?? -1,
         });
         return;
       }
 
-      if (stderr.trim()) {
-        logWarn(resolvedOptions, `Script wrote to stderr: ${stderr.trim()}`);
+      if (resolvedOptions.strict && stderrText) {
+        resolve({
+          status: "error",
+          stdout: stdoutText,
+          stderr: `Strict mode failed because the script wrote to stderr:\n${stderrText}`,
+          value,
+          exitCode: code ?? 0,
+        });
+        return;
+      }
+
+      if (resolvedOptions.strict && !parsed.found) {
+        resolve({
+          status: "error",
+          stdout: stdoutText,
+          stderr: "Strict mode failed because stdout did not contain a JSON value",
+          value,
+          exitCode: code ?? 0,
+        });
+        return;
+      }
+
+      if (stderrText) {
+        logWarn(resolvedOptions, `Script wrote to stderr: ${stderrText}`);
       }
 
       resolve({
         status: "success",
-        stdout: stdout.trim(),
-        stderr: stderr.trim(),
+        stdout: stdoutText,
+        stderr: stderrText,
         value,
         exitCode: code ?? 0,
       });
@@ -243,7 +410,7 @@ export function hasValue(result: ExecuteResult, expected: unknown): boolean {
  * const name = getValue(result, "user.name", "Unknown");
  * ```
  */
-export function getValue<T = any>(
+export function getValue<T = unknown>(
   result: ExecuteResult,
   path: string,
   defaultValue?: T,

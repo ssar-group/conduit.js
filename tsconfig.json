@@ -1,13 +1,14 @@
 {
   "compilerOptions": {
     "target": "ES2022",
-    "module": "ES2022",
+    "module": "NodeNext",
     "lib": ["ES2022", "DOM"],
-    "moduleResolution": "node10",
+    "moduleResolution": "NodeNext",
     "declaration": true,
+    "declarationMap": true,
     "outDir": "./dist",
     "rootDir": "./src",
-    "strict": false,
+    "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
@@ -16,10 +17,7 @@
     "types": ["node"]
   },
   "include": [
-    "src/**/*",
-    "examples/advanced.ts",
-    "examples/multi-lang.ts",
-    "examples/test.ts"
+    "src/**/*"
   ],
   "exclude": ["node_modules", "dist", "examples"]
 }

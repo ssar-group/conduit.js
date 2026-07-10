@@ -20,6 +20,8 @@ export interface Options {
   apiEndpoint?: string;
   headers?: Record<string, string>;
   signal?: AbortSignal;
+  maxStdoutBytes?: number;
+  maxStderrBytes?: number;
 }
 
 export interface JSONObject {
@@ -32,7 +34,7 @@ export interface ExecuteResult {
   status: Status;
   stdout: string;
   stderr: string;
-  value?: any;
+  value?: unknown;
   exitCode: number;
 }
 

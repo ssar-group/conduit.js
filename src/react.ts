@@ -10,6 +10,7 @@ import { useState, useCallback } from "react";
 import type { ExecuteResult, Options, RPLResult, Status } from "./types.js";
 import {
   extractJsonValue,
+  findJsonValue,
   formatError,
   getValue as readValue,
   hasValue as compareValue,
@@ -62,11 +63,38 @@ export async function Execute(
     };
   }
 
-  if (options.timeoutMs !== undefined && options.timeoutMs <= 0) {
+  if (options.timeoutMs !== undefined && (!Number.isFinite(options.timeoutMs) || options.timeoutMs <= 0)) {
     return {
       status: "error",
       stdout: "",
       stderr: formatError("timeoutMs must be greater than 0"),
+      exitCode: -1,
+    };
+  }
+
+  if (options.args && (!Array.isArray(options.args) || options.args.some((arg) => typeof arg !== "string"))) {
+    return {
+      status: "error",
+      stdout: "",
+      stderr: formatError("Options args must be an array of strings"),
+      exitCode: -1,
+    };
+  }
+
+  if (options.maxStdoutBytes !== undefined && (!Number.isSafeInteger(options.maxStdoutBytes) || options.maxStdoutBytes <= 0)) {
+    return {
+      status: "error",
+      stdout: "",
+      stderr: formatError("maxStdoutBytes must be a positive integer"),
+      exitCode: -1,
+    };
+  }
+
+  if (options.maxStderrBytes !== undefined && (!Number.isSafeInteger(options.maxStderrBytes) || options.maxStderrBytes <= 0)) {
+    return {
+      status: "error",
+      stdout: "",
+      stderr: formatError("maxStderrBytes must be a positive integer"),
       exitCode: -1,
     };
   }
@@ -95,6 +123,8 @@ export async function Execute(
         context: options.context,
         strict: options.strict,
         debug: options.debug,
+        maxStdoutBytes: options.maxStdoutBytes,
+        maxStderrBytes: options.maxStderrBytes,
       }),
       signal,
     });
@@ -112,31 +142,50 @@ export async function Execute(
       );
     }
 
-    const data = await response.json();
+    const data = await response.json() as Partial<ExecuteResult>;
+    const stdout = typeof data.stdout === "string" ? data.stdout : "";
+    const stderr = typeof data.stderr === "string" ? data.stderr : "";
+    const parsed = findJsonValue(stdout);
 
     // Parse value if present
     const value =
       data.value !== undefined
         ? data.value
-        : extractJsonValue(data.stdout || "");
+        : extractJsonValue(stdout);
 
     const result = {
       status: data.status || "success",
-      stdout: data.stdout || "",
-      stderr: data.stderr || "",
+      stdout,
+      stderr,
       value,
       exitCode: data.exitCode ?? 0,
     };
+
+    if (options.strict && result.status === "success" && result.stderr) {
+      return {
+        ...result,
+        status: "error",
+        stderr: `Strict mode failed because the API returned stderr:\n${result.stderr}`,
+      };
+    }
+
+    if (options.strict && result.status === "success" && data.value === undefined && !parsed.found) {
+      return {
+        ...result,
+        status: "error",
+        stderr: "Strict mode failed because the API response did not contain a JSON value",
+      };
+    }
 
     if (result.status === "success" && result.stderr) {
       logWarn(options, `API returned stderr: ${result.stderr}`);
     }
 
     return result;
-  } catch (error: any) {
+  } catch (error: unknown) {
     if (timeoutId) clearTimeout(timeoutId);
 
-    if (error.name === "AbortError") {
+    if (error instanceof Error && error.name === "AbortError") {
       logDebug(options.debug, "Request aborted");
       return {
         status: "error",
@@ -152,7 +201,7 @@ export async function Execute(
     return {
       status: "error",
       stdout: "",
-      stderr: error.message || String(error),
+      stderr: error instanceof Error ? error.message : String(error),
       exitCode: -1,
     };
   }
@@ -207,7 +256,7 @@ export function hasValue(result: ExecuteResult, expected: unknown): boolean {
  * const userName = getValue(result, "user.name", "Unknown");
  * ```
  */
-export function getValue<T = any>(
+export function getValue<T = unknown>(
   result: ExecuteResult,
   path: string,
   defaultValue?: T
@@ -264,8 +313,8 @@ export function useConduit() {
       }
 
       return res;
-    } catch (err: any) {
-      const errorMsg = err.message || String(err);
+    } catch (err: unknown) {
+      const errorMsg = err instanceof Error ? err.message : String(err);
       setError(errorMsg);
       return {
         status: "error" as Status,

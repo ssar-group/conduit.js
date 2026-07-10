@@ -1,14 +1,7 @@
-//
-// Small test file used to validate Conduit.js execution.
-// It runs a random external script, prints the result,
-// and makes sure outputs, status, and values are correctly received.
-// ----
-// by @AkzW21
-// ----
 import conduit from "../dist/native.js";
 
 async function main() {
-  console.log("Running Python Script...");
+  console.log("Run Python script");
 
   const result = await conduit("examples/node-test.py", {
     args: ["World"],

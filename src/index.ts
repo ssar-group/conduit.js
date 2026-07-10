@@ -9,12 +9,16 @@ export {
   useConduit,
 } from "./react.js";
 
+import type { ExecuteResult, Options } from "./types.js";
+
+type ExecuteFunction = (scriptPath: string, options?: Options) => Promise<ExecuteResult>;
+
 const isNode =
   typeof process !== "undefined" &&
   process.versions != null &&
   process.versions.node != null;
 
-let Execute: any;
+let Execute: ExecuteFunction;
 
 if (isNode) {
   const nativeModule = await import("./native.js");

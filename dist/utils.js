@@ -24,20 +24,29 @@ export function isPlainObject(input) {
         input !== null &&
         !Array.isArray(input));
 }
-export function extractJsonValue(stdout) {
+export function findJsonValue(stdout) {
     const lines = stdout.trim().split(/\r?\n/);
     for (let index = lines.length - 1; index >= 0; index -= 1) {
         const line = lines[index]?.trim();
         if (!line)
             continue;
         try {
-            return JSON.parse(line);
+            return {
+                found: true,
+                value: JSON.parse(line),
+            };
         }
         catch {
             continue;
         }
     }
-    return null;
+    return {
+        found: false,
+        value: null,
+    };
+}
+export function extractJsonValue(stdout) {
+    return findJsonValue(stdout).value;
 }
 export function normalizeResultValue(input) {
     if (input === null || input === undefined) {
