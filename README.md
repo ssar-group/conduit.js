@@ -9,6 +9,7 @@
 [![status](https://img.shields.io/badge/status-active-44cc11.svg)](#repository-status)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](https://github.com/ssar-group/conduit.js/pulls)
+[![Socket Badge](https://badge.socket.dev/npm/package/@ssar-group/conduit.js/2.0.0)](https://badge.socket.dev/npm/package/@ssar-group/conduit.js/2.0.0)
 
 </div>
 
