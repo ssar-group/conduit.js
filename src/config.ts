@@ -23,11 +23,21 @@ export async function loadConduitConfig(
 ): Promise<ConduitConfig> {
   const root = path.resolve(cwd);
 
-  if (!cache.has(root)) {
-    cache.set(root, readConduitConfig(root, options));
+  let pending = cache.get(root);
+  if (!pending) {
+    pending = readConduitConfig(root, options);
+    cache.set(root, pending);
+    pending.catch(() => {
+      if (cache.get(root) === pending) cache.delete(root);
+    });
   }
+  return pending;
+}
 
-  return cache.get(root)!;
+/** Clear the cached config for a directory, or clear all cached configs. */
+export function clearConduitConfigCache(cwd?: string): void {
+  if (cwd === undefined) cache.clear();
+  else cache.delete(path.resolve(cwd));
 }
 
 async function readConduitConfig(

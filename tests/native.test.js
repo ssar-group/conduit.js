@@ -136,3 +136,31 @@ test("aborts a running script with AbortSignal", async () => {
     assert.match(result.stderr, /Execution aborted/);
   });
 });
+
+test("preserves UTF-8 output across child process chunks", async () => {
+  await withTempProject(async (root) => {
+    await writeScript(root, "utf8.py", [
+      "import os, time",
+      "os.write(1, b'\\xe2')",
+      "time.sleep(0.02)",
+      "os.write(1, b'\\x82\\xac\\n')",
+    ].join("\n"));
+
+    const result = await Execute("utf8.py", { cwd: root });
+    assert.equal(result.status, "success");
+    assert.equal(result.stdout, "€");
+  });
+});
+
+test("does not retain a rejected config load in cache", async () => {
+  await withTempProject(async (root) => {
+    const configPath = path.join(root, "conduit.config.json");
+    await writeFile(configPath, "{invalid", "utf8");
+    await assert.rejects(() => Execute("later.py", { cwd: root }), /Unable to read config/);
+
+    await writeFile(configPath, "{}", "utf8");
+    await writeScript(root, "later.py", "print('{}')\n");
+    const result = await Execute("later.py", { cwd: root });
+    assert.equal(result.status, "success");
+  });
+});

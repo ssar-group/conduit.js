@@ -5,7 +5,7 @@
 // | |___| (_) | | | | (_| | |_| | | |_ | |__| |____) |
 //  \_____\___/|_| |_|\__,_|\__,_|_|\__(_)____/|_____/
 // --------(react)
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { extractJsonValue, findJsonValue, formatError, getValue as readValue, hasValue as compareValue, logDebug, logWarn, normalizeResultValue, } from "./utils.js";
 /**
  * Executes a script via API endpoint (for browser/React environments).
@@ -80,12 +80,18 @@ export async function Execute(scriptPath, options = {}) {
     }
     logDebug(options.debug, "Executing", scriptPath, "via", apiEndpoint);
     let timeoutId;
+    const externalSignal = options.signal;
+    let abortFromExternal;
     try {
         const controller = new AbortController();
+        abortFromExternal = () => controller.abort(externalSignal?.reason);
+        externalSignal?.addEventListener("abort", abortFromExternal, { once: true });
+        if (externalSignal?.aborted)
+            abortFromExternal();
         timeoutId = options.timeoutMs
             ? setTimeout(() => controller.abort(), options.timeoutMs)
             : undefined;
-        const signal = options.signal || controller.signal;
+        const signal = controller.signal;
         const response = await fetch(apiEndpoint, {
             method: "POST",
             headers: {
@@ -105,6 +111,8 @@ export async function Execute(scriptPath, options = {}) {
         });
         if (timeoutId)
             clearTimeout(timeoutId);
+        if (abortFromExternal)
+            externalSignal?.removeEventListener("abort", abortFromExternal);
         if (!response.ok) {
             const errorText = await response.text();
             throw new Error(formatError("API request failed", {
@@ -150,6 +158,8 @@ export async function Execute(scriptPath, options = {}) {
     catch (error) {
         if (timeoutId)
             clearTimeout(timeoutId);
+        if (abortFromExternal)
+            externalSignal?.removeEventListener("abort", abortFromExternal);
         if (error instanceof Error && error.name === "AbortError") {
             logDebug(options.debug, "Request aborted");
             return {
@@ -253,11 +263,28 @@ export function useConduit() {
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState(null);
     const [result, setResult] = useState(null);
+    const mounted = useRef(true);
+    const requestId = useRef(0);
+    const activeController = useRef(null);
+    useEffect(() => {
+        mounted.current = true;
+        return () => {
+            mounted.current = false;
+            requestId.current += 1;
+            activeController.current?.abort();
+        };
+    }, []);
     const execute = useCallback(async (scriptPath, options) => {
+        const currentRequest = ++requestId.current;
+        activeController.current?.abort();
+        const controller = new AbortController();
+        activeController.current = controller;
         setLoading(true);
         setError(null);
         try {
-            const res = await Execute(scriptPath, options);
+            const res = await Execute(scriptPath, { ...options, signal: controller.signal });
+            if (!mounted.current || currentRequest !== requestId.current)
+                return res;
             setResult(res);
             if (res.status === "error") {
                 setError(res.stderr);
@@ -266,7 +293,8 @@ export function useConduit() {
         }
         catch (err) {
             const errorMsg = err instanceof Error ? err.message : String(err);
-            setError(errorMsg);
+            if (mounted.current && currentRequest === requestId.current)
+                setError(errorMsg);
             return {
                 status: "error",
                 stdout: "",
@@ -275,10 +303,16 @@ export function useConduit() {
             };
         }
         finally {
-            setLoading(false);
+            if (mounted.current && currentRequest === requestId.current)
+                setLoading(false);
+            if (activeController.current === controller)
+                activeController.current = null;
         }
     }, []);
     const reset = useCallback(() => {
+        requestId.current += 1;
+        activeController.current?.abort();
+        activeController.current = null;
         setLoading(false);
         setError(null);
         setResult(null);

@@ -6,7 +6,7 @@
 //  \_____\___/|_| |_|\__,_|\__,_|_|\__(_)____/|_____/
 // --------(react)
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import type { ExecuteResult, Options, RPLResult, Status } from "./types.js";
 import {
   extractJsonValue,
@@ -102,14 +102,19 @@ export async function Execute(
   logDebug(options.debug, "Executing", scriptPath, "via", apiEndpoint);
 
   let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  const externalSignal = options.signal;
+  let abortFromExternal: (() => void) | undefined;
 
   try {
     const controller = new AbortController();
+    abortFromExternal = () => controller.abort(externalSignal?.reason);
+    externalSignal?.addEventListener("abort", abortFromExternal, { once: true });
+    if (externalSignal?.aborted) abortFromExternal();
     timeoutId = options.timeoutMs
       ? setTimeout(() => controller.abort(), options.timeoutMs)
       : undefined;
 
-    const signal = options.signal || controller.signal;
+    const signal = controller.signal;
 
     const response = await fetch(apiEndpoint, {
       method: "POST",
@@ -130,6 +135,7 @@ export async function Execute(
     });
 
     if (timeoutId) clearTimeout(timeoutId);
+    if (abortFromExternal) externalSignal?.removeEventListener("abort", abortFromExternal);
 
     if (!response.ok) {
       const errorText = await response.text();
@@ -184,6 +190,7 @@ export async function Execute(
     return result;
   } catch (error: unknown) {
     if (timeoutId) clearTimeout(timeoutId);
+    if (abortFromExternal) externalSignal?.removeEventListener("abort", abortFromExternal);
 
     if (error instanceof Error && error.name === "AbortError") {
       logDebug(options.debug, "Request aborted");
@@ -299,13 +306,30 @@ export function useConduit() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<ExecuteResult | null>(null);
+  const mounted = useRef(true);
+  const requestId = useRef(0);
+  const activeController = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      requestId.current += 1;
+      activeController.current?.abort();
+    };
+  }, []);
 
   const execute = useCallback(async (scriptPath: string, options?: Options) => {
+    const currentRequest = ++requestId.current;
+    activeController.current?.abort();
+    const controller = new AbortController();
+    activeController.current = controller;
     setLoading(true);
     setError(null);
 
     try {
-      const res = await Execute(scriptPath, options);
+      const res = await Execute(scriptPath, { ...options, signal: controller.signal });
+      if (!mounted.current || currentRequest !== requestId.current) return res;
       setResult(res);
 
       if (res.status === "error") {
@@ -315,7 +339,7 @@ export function useConduit() {
       return res;
     } catch (err: unknown) {
       const errorMsg = err instanceof Error ? err.message : String(err);
-      setError(errorMsg);
+      if (mounted.current && currentRequest === requestId.current) setError(errorMsg);
       return {
         status: "error" as Status,
         stdout: "",
@@ -323,11 +347,15 @@ export function useConduit() {
         exitCode: -1,
       };
     } finally {
-      setLoading(false);
+      if (mounted.current && currentRequest === requestId.current) setLoading(false);
+      if (activeController.current === controller) activeController.current = null;
     }
   }, []);
 
   const reset = useCallback(() => {
+    requestId.current += 1;
+    activeController.current?.abort();
+    activeController.current = null;
     setLoading(false);
     setError(null);
     setResult(null);

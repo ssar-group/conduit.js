@@ -9,6 +9,9 @@
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "type": "module",
+  "engines": {
+    "node": ">=18"
+  },
   "files": [
     "dist",
     "README.md",
@@ -19,19 +22,23 @@
   "exports": {
     ".": {
       "import": "./dist/index.js",
-      "types": "./dist/index.d.ts"
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
     },
     "./native": {
       "import": "./dist/native.js",
-      "types": "./dist/native.d.ts"
+      "types": "./dist/native.d.ts",
+      "default": "./dist/native.js"
     },
     "./react": {
       "import": "./dist/react.js",
-      "types": "./dist/react.d.ts"
+      "types": "./dist/react.d.ts",
+      "default": "./dist/react.js"
     },
     "./config": {
       "import": "./dist/config.js",
-      "types": "./dist/config.d.ts"
+      "types": "./dist/config.d.ts",
+      "default": "./dist/config.js"
     }
   },
   "scripts": {

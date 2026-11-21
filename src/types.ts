@@ -30,11 +30,11 @@ export interface JSONObject {
 
 export interface JSONArray extends Array<JSON> {}
 
-export interface ExecuteResult {
+export interface ExecuteResult<T = unknown> {
   status: Status;
   stdout: string;
   stderr: string;
-  value?: unknown;
+  value?: T;
   exitCode: number;
 }
 

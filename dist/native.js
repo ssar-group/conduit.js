@@ -22,11 +22,10 @@ function validatePositiveInteger(name, value) {
     }
 }
 function appendOutput(output, chunk, maxBytes) {
-    const text = chunk.toString();
     if (maxBytes === undefined) {
         return {
-            text: output.text + text,
-            bytes: output.bytes + Buffer.byteLength(text),
+            chunks: [...output.chunks, chunk],
+            bytes: output.bytes + chunk.byteLength,
             exceeded: output.exceeded,
         };
     }
@@ -37,20 +36,21 @@ function appendOutput(output, chunk, maxBytes) {
             exceeded: true,
         };
     }
-    const bytes = Buffer.from(text);
-    if (bytes.byteLength <= remaining) {
+    if (chunk.byteLength <= remaining) {
         return {
-            text: output.text + text,
-            bytes: output.bytes + bytes.byteLength,
+            chunks: [...output.chunks, chunk],
+            bytes: output.bytes + chunk.byteLength,
             exceeded: output.exceeded,
         };
     }
-    const trimmed = bytes.subarray(0, remaining).toString("utf8").replace(/\uFFFD$/, "");
     return {
-        text: output.text + trimmed,
+        chunks: [...output.chunks, chunk.subarray(0, remaining)],
         bytes: maxBytes,
         exceeded: true,
     };
+}
+function outputText(output) {
+    return Buffer.concat(output.chunks).toString("utf8");
 }
 function joinDiagnostics(stderr, diagnostics) {
     const parts = [stderr.trim(), ...diagnostics].filter(Boolean);
@@ -81,7 +81,9 @@ export async function Execute(i, options = {}) {
     if (!i || typeof i !== "string") {
         throw new Error(formatError("Script path is required"));
     }
-    if (options.args && (!Array.isArray(options.args) || options.args.some((arg) => typeof arg !== "string"))) {
+    if (options.args &&
+        (!Array.isArray(options.args) ||
+            options.args.some((arg) => typeof arg !== "string"))) {
         throw new Error(formatError("Options args must be an array of strings"));
     }
     validatePositiveNumber("timeoutMs", options.timeoutMs);
@@ -153,8 +155,8 @@ export async function Execute(i, options = {}) {
             cwd: root,
             env,
         });
-        let stdout = { text: "", bytes: 0, exceeded: false };
-        let stderr = { text: "", bytes: 0, exceeded: false };
+        let stdout = { chunks: [], bytes: 0, exceeded: false };
+        let stderr = { chunks: [], bytes: 0, exceeded: false };
         let timeout;
         let abortKillTimeout;
         let timedOut = false;
@@ -168,9 +170,8 @@ export async function Execute(i, options = {}) {
             resolvedOptions.signal?.removeEventListener("abort", abortHandler);
         };
         const killProcess = (signal) => {
-            if (!child.killed) {
+            if (child.exitCode === null && child.signalCode === null)
                 child.kill(signal);
-            }
         };
         const stopForOutputLimit = (stream) => {
             if (limitExceeded)
@@ -193,7 +194,11 @@ export async function Execute(i, options = {}) {
                 killProcess("SIGKILL");
             }, resolvedOptions.timeoutMs);
         }
-        resolvedOptions.signal?.addEventListener("abort", abortHandler, { once: true });
+        resolvedOptions.signal?.addEventListener("abort", abortHandler, {
+            once: true,
+        });
+        if (resolvedOptions.signal?.aborted)
+            abortHandler();
         child.stdout.on("data", (data) => {
             stdout = appendOutput(stdout, data, resolvedOptions.maxStdoutBytes);
             if (stdout.exceeded) {
@@ -215,8 +220,8 @@ export async function Execute(i, options = {}) {
         });
         child.on("close", (code) => {
             cleanup();
-            const stdoutText = stdout.text.trim();
-            const stderrText = stderr.text.trim();
+            const stdoutText = outputText(stdout).trim();
+            const stderrText = outputText(stderr).trim();
             const parsed = findJsonValue(stdoutText);
             const diagnostics = [];
             if (timedOut) {
@@ -241,7 +246,7 @@ export async function Execute(i, options = {}) {
                     stdout: stdoutText,
                     stderr: stderrWithDiagnostics || `Process exited with code ${code}`,
                     value,
-                    exitCode: timedOut || aborted || limitExceeded ? -1 : code ?? -1,
+                    exitCode: timedOut || aborted || limitExceeded ? -1 : (code ?? -1),
                 });
                 return;
             }

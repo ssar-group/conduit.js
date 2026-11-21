@@ -13,10 +13,23 @@ export function defineConduitConfig(config) {
 }
 export async function loadConduitConfig(cwd = process.cwd(), options = {}) {
     const root = path.resolve(cwd);
-    if (!cache.has(root)) {
-        cache.set(root, readConduitConfig(root, options));
+    let pending = cache.get(root);
+    if (!pending) {
+        pending = readConduitConfig(root, options);
+        cache.set(root, pending);
+        pending.catch(() => {
+            if (cache.get(root) === pending)
+                cache.delete(root);
+        });
     }
-    return cache.get(root);
+    return pending;
+}
+/** Clear the cached config for a directory, or clear all cached configs. */
+export function clearConduitConfigCache(cwd) {
+    if (cwd === undefined)
+        cache.clear();
+    else
+        cache.delete(path.resolve(cwd));
 }
 async function readConduitConfig(root, options) {
     for (const name of configNames) {

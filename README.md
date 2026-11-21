@@ -17,9 +17,9 @@
 
 Conduit.js is a small bridge between Node.js and scripts written in other languages.
 
-Use it when a JavaScript app needs to run a local script, pass arguments, capture stdout/stderr, and read a JSON result without writing the same `child_process` wrapper again and again.
+Use it when a Node.js app needs to run a local script, pass arguments, capture stdout/stderr, and read a JSON result without writing the same `child_process` wrapper again and again.
 
-It also includes a React/browser entrypoint. The browser cannot run local scripts by itself, so that entrypoint sends the request to your own backend API.
+It also includes a React/browser entrypoint. The browser cannot run local scripts by itself, so that entrypoint sends the request to your own backend API. Import `@ssar-group/conduit.js/react` explicitly in browser code; the package root is the Node.js native entrypoint.
 
 ## Contents
 
@@ -95,6 +95,8 @@ interface ExecuteResult {
 }
 ```
 
+The exported type is generic: `ExecuteResult<MyValue>` types `value` as `MyValue`.
+
 If stdout contains logs and then JSON, Conduit uses the JSON line:
 
 ```txt
@@ -161,6 +163,8 @@ await Execute("scripts/task.py", {
 | `env`            | Extra environment variables for the child process.            |
 | `signal`         | AbortSignal used to stop a running native process.            |
 
+The root import and `ExecuteNative` are Node.js APIs. Browser applications should import `Execute` or `useConduit` from `@ssar-group/conduit.js/react`. The old runtime-selected root behavior is removed so bundlers do not need to guess which runtime is active.
+
 When `timeoutMs`, `signal`, or an output limit stops the process, Conduit returns `status: "error"` and explains the reason in `stderr`.
 
 ### Strict Mode
@@ -183,6 +187,7 @@ With `strict: true`, Conduit returns an error result when:
 ## Config
 
 Conduit looks for a config file in `cwd`. Per-call options override config values.
+Configuration loads are cached by resolved directory. Call `clearConduitConfigCache(cwd)` after changing a config file at runtime, or omit `cwd` to clear all cached configurations. Failed loads are not cached.
 
 Supported files:
 

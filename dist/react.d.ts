@@ -93,10 +93,10 @@ export declare function getValue<T = unknown>(result: ExecuteResult, path: strin
  * ```
  */
 export declare function useConduit(): {
-    execute: (scriptPath: string, options?: Options) => Promise<ExecuteResult>;
+    execute: (scriptPath: string, options?: Options) => Promise<ExecuteResult<unknown>>;
     loading: boolean;
     error: string | null;
-    result: ExecuteResult | null;
+    result: ExecuteResult<unknown> | null;
     reset: () => void;
 };
 export default Execute;

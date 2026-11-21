@@ -12,7 +12,6 @@ import fs from "fs/promises";
 import { loadConduitConfig, mergeConduitConfig } from "./config.js";
 import type { ExecuteResult, Options, RPLResult } from "./types.js";
 import {
-  extractJsonValue,
   findJsonValue,
   formatError,
   getValue as readValue,
@@ -30,7 +29,7 @@ interface LangConfig {
 }
 
 interface CapturedOutput {
-  text: string;
+  chunks: Buffer[];
   bytes: number;
   exceeded: boolean;
 }
@@ -43,7 +42,10 @@ function validatePositiveNumber(name: string, value: number | undefined): void {
   }
 }
 
-function validatePositiveInteger(name: string, value: number | undefined): void {
+function validatePositiveInteger(
+  name: string,
+  value: number | undefined,
+): void {
   if (value !== undefined && (!Number.isSafeInteger(value) || value <= 0)) {
     throw new Error(formatError(`${name} must be a positive integer`));
   }
@@ -54,12 +56,10 @@ function appendOutput(
   chunk: Buffer,
   maxBytes: number | undefined,
 ): CapturedOutput {
-  const text = chunk.toString();
-
   if (maxBytes === undefined) {
     return {
-      text: output.text + text,
-      bytes: output.bytes + Buffer.byteLength(text),
+      chunks: [...output.chunks, chunk],
+      bytes: output.bytes + chunk.byteLength,
       exceeded: output.exceeded,
     };
   }
@@ -73,23 +73,23 @@ function appendOutput(
     };
   }
 
-  const bytes = Buffer.from(text);
-
-  if (bytes.byteLength <= remaining) {
+  if (chunk.byteLength <= remaining) {
     return {
-      text: output.text + text,
-      bytes: output.bytes + bytes.byteLength,
+      chunks: [...output.chunks, chunk],
+      bytes: output.bytes + chunk.byteLength,
       exceeded: output.exceeded,
     };
   }
 
-  const trimmed = bytes.subarray(0, remaining).toString("utf8").replace(/\uFFFD$/, "");
-
   return {
-    text: output.text + trimmed,
+    chunks: [...output.chunks, chunk.subarray(0, remaining)],
     bytes: maxBytes,
     exceeded: true,
   };
+}
+
+function outputText(output: CapturedOutput): string {
+  return Buffer.concat(output.chunks).toString("utf8");
 }
 
 function joinDiagnostics(stderr: string, diagnostics: string[]): string {
@@ -126,7 +126,11 @@ export async function Execute(
     throw new Error(formatError("Script path is required"));
   }
 
-  if (options.args && (!Array.isArray(options.args) || options.args.some((arg) => typeof arg !== "string"))) {
+  if (
+    options.args &&
+    (!Array.isArray(options.args) ||
+      options.args.some((arg) => typeof arg !== "string"))
+  ) {
     throw new Error(formatError("Options args must be an array of strings"));
   }
 
@@ -211,8 +215,8 @@ export async function Execute(
       env,
     });
 
-    let stdout: CapturedOutput = { text: "", bytes: 0, exceeded: false };
-    let stderr: CapturedOutput = { text: "", bytes: 0, exceeded: false };
+    let stdout: CapturedOutput = { chunks: [], bytes: 0, exceeded: false };
+    let stderr: CapturedOutput = { chunks: [], bytes: 0, exceeded: false };
     let timeout: NodeJS.Timeout | undefined;
     let abortKillTimeout: NodeJS.Timeout | undefined;
     let timedOut = false;
@@ -226,9 +230,8 @@ export async function Execute(
     };
 
     const killProcess = (signal: NodeJS.Signals) => {
-      if (!child.killed) {
+      if (child.exitCode === null && child.signalCode === null)
         child.kill(signal);
-      }
     };
 
     const stopForOutputLimit = (stream: OutputStreamName) => {
@@ -255,7 +258,10 @@ export async function Execute(
       }, resolvedOptions.timeoutMs);
     }
 
-    resolvedOptions.signal?.addEventListener("abort", abortHandler, { once: true });
+    resolvedOptions.signal?.addEventListener("abort", abortHandler, {
+      once: true,
+    });
+    if (resolvedOptions.signal?.aborted) abortHandler();
 
     child.stdout.on("data", (data: Buffer) => {
       stdout = appendOutput(stdout, data, resolvedOptions.maxStdoutBytes);
@@ -286,13 +292,15 @@ export async function Execute(
     child.on("close", (code) => {
       cleanup();
 
-      const stdoutText = stdout.text.trim();
-      const stderrText = stderr.text.trim();
+      const stdoutText = outputText(stdout).trim();
+      const stderrText = outputText(stderr).trim();
       const parsed = findJsonValue(stdoutText);
       const diagnostics: string[] = [];
 
       if (timedOut) {
-        diagnostics.push(`Process killed after ${resolvedOptions.timeoutMs}ms timeout`);
+        diagnostics.push(
+          `Process killed after ${resolvedOptions.timeoutMs}ms timeout`,
+        );
       }
 
       if (aborted) {
@@ -300,25 +308,33 @@ export async function Execute(
       }
 
       if (limitExceeded) {
-        const optionName = limitExceeded === "stdout" ? "maxStdoutBytes" : "maxStderrBytes";
-        const limit = limitExceeded === "stdout"
-          ? resolvedOptions.maxStdoutBytes
-          : resolvedOptions.maxStderrBytes;
+        const optionName =
+          limitExceeded === "stdout" ? "maxStdoutBytes" : "maxStderrBytes";
+        const limit =
+          limitExceeded === "stdout"
+            ? resolvedOptions.maxStdoutBytes
+            : resolvedOptions.maxStderrBytes;
 
-        diagnostics.push(`${limitExceeded} exceeded ${optionName} limit of ${limit} bytes`);
+        diagnostics.push(
+          `${limitExceeded} exceeded ${optionName} limit of ${limit} bytes`,
+        );
       }
 
       const stderrWithDiagnostics = joinDiagnostics(stderrText, diagnostics);
       const value = parsed.value;
 
       if (code !== 0 || timedOut || aborted || limitExceeded) {
-        logDebug(resolvedOptions.debug, "Execution error", stderrWithDiagnostics);
+        logDebug(
+          resolvedOptions.debug,
+          "Execution error",
+          stderrWithDiagnostics,
+        );
         resolve({
           status: "error",
           stdout: stdoutText,
           stderr: stderrWithDiagnostics || `Process exited with code ${code}`,
           value,
-          exitCode: timedOut || aborted || limitExceeded ? -1 : code ?? -1,
+          exitCode: timedOut || aborted || limitExceeded ? -1 : (code ?? -1),
         });
         return;
       }
@@ -338,7 +354,8 @@ export async function Execute(
         resolve({
           status: "error",
           stdout: stdoutText,
-          stderr: "Strict mode failed because stdout did not contain a JSON value",
+          stderr:
+            "Strict mode failed because stdout did not contain a JSON value",
           value,
           exitCode: code ?? 0,
         });

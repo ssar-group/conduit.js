@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.1.0]
+
+- Fixed UTF-8 output capture and accounted output limits against original bytes.
+- Fixed abort listener races and rejected configuration cache entries.
+- Prevented stale React requests from replacing current state and aborts active work on unmount.
+- Made the package root a stable Node.js entrypoint; browser consumers should use `/react`.
+- Added `clearConduitConfigCache` and generic `ExecuteResult<T>` typing.
+- Declared Node.js 18 as the minimum supported runtime.
+
 ## [2.0.0]
 
 - Added native `AbortSignal` support.
